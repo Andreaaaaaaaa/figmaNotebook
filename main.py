@@ -2,15 +2,22 @@ import os
 import json
 import time
 import requests
+import yaml
 import feedparser
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
-
 from deep_translator import GoogleTranslator
 
 # Configuration
 WEBHOOK_URL = os.environ.get("WECOM_WEBHOOK_URL")
 STATE_FILE = "state.json"
+CONFIG_FILE = "config.yaml"
+
+def load_config():
+    if not os.path.exists(CONFIG_FILE):
+        raise FileNotFoundError(f"Config file {CONFIG_FILE} not found.")
+    with open(CONFIG_FILE, "r") as f:
+        return yaml.safe_load(f)
 
 def load_state():
     if os.path.exists(STATE_FILE):
@@ -43,7 +50,7 @@ def send_wechat_batch_notification(updates):
     date_str = datetime.now().strftime("%Y-%m-%d")
     
     # Header
-    full_content = f"# Figma 更新日报 ({date_str})\n\n"
+    full_content = f"# 资讯监控日报 ({date_str})\n\n"
     
     for i, update in enumerate(updates, 1):
         # Translate title and content
@@ -52,9 +59,9 @@ def send_wechat_batch_notification(updates):
         content_summary = update['content'].split('.')[0] if '.' in update['content'] else update['content'][:100]
         content_cn = translate_text(content_summary)
         
-        source_tag = "【博客】" if update['source'] == "Blog" else "【更新】"
+        source_name = update['source']
         
-        full_content += f"### {i}. {source_tag} {title_cn}\n\n"
+        full_content += f"### {i}. 【{source_name}】 {title_cn}\n\n"
         full_content += f"> 原文: {update['title']}\n"
         full_content += f"> 说明: {content_cn}\n"
         full_content += f"> [查看详情]({update['link']})\n\n"
@@ -74,7 +81,10 @@ def send_wechat_batch_notification(updates):
     except Exception as e:
         print(f"Failed to send notification: {e}")
 
-def fetch_updates_generic(url, source_name):
+# --- Scraper Logic ---
+
+def fetch_figma_generic(url, source_name):
+    # Preserving the original robust logic for Figma
     print(f"Fetching {source_name} from {url}...")
     updates = []
     try:
@@ -82,8 +92,6 @@ def fetch_updates_generic(url, source_name):
         resp.raise_for_status()
         soup = BeautifulSoup(resp.content, "html.parser")
         
-        # Strategy: Find all <time> tags. Their parent usually contains the title and content.
-        # We use a set to track processed parents to avoid duplicates (if multiple time tags or structure causes overlap)
         processed_parents = set()
         
         for time_tag in soup.find_all("time"):
@@ -92,25 +100,16 @@ def fetch_updates_generic(url, source_name):
                 continue
             processed_parents.add(parent)
             
-            # Extract Date
             date_str = time_tag.get_text(strip=True)
-            
-            # Extract Title
-            # Look for h2 or h3 in the parent
             title_tag = parent.find(["h2", "h3"])
             
-            # Special handling for Blog: traverse up if not found
-            if not title_tag and source_name == "Blog":
-                # Try going up to the anchor tag
+            if not title_tag and "Blog" in source_name:
                 curr = parent
                 while curr and curr.name != 'a' and curr.name != 'body':
                     curr = curr.parent
-                
                 if curr and curr.name == 'a':
-                    # We found the anchor. The title might be an h3 inside it, or just text.
                     title_tag = curr.find(["h2", "h3", "div"]) 
                     if not title_tag:
-                         # Heuristic: Use the text of the anchor, remove the date
                          full_text = curr.get_text(" ", strip=True)
                          title = full_text.replace(date_str, "").strip()
                          if "By " in title:
@@ -119,14 +118,13 @@ def fetch_updates_generic(url, source_name):
             
             if title_tag:
                 title = title_tag.get_text(strip=True)
-            elif not title and source_name != "Blog": 
+            elif not title and "Blog" not in source_name: 
                 title = "No Title"
                 
-            if (not title or title == "No Title") and source_name == "Blog":
+            if (not title or title == "No Title") and "Blog" in source_name:
                  full_text = parent.get_text(" ", strip=True)
                  title = full_text.replace(date_str, "").strip()
 
-            # Extract Link
             link = url
             if parent.name == 'a':
                 link = parent.get('href')
@@ -138,16 +136,14 @@ def fetch_updates_generic(url, source_name):
                         curr = curr.parent
                     if curr and curr.name == 'a':
                         a_tag = curr
-                
                 if a_tag:
                     link = a_tag.get('href')
             
             if link and not link.startswith('http'):
                 link = f"https://www.figma.com{link}"
             
-            # Extract Content/Summary
             content = ""
-            if source_name == "Release Notes":
+            if "Release Notes" in source_name:
                 full_text = parent.get_text(" ", strip=True)
                 content = full_text.replace(title, "").replace(date_str, "").strip()
                 if len(content) > 200:
@@ -167,25 +163,43 @@ def fetch_updates_generic(url, source_name):
         
     return updates
 
-# ... (Previous fetch_updates_generic code is assumed to be above line 60 or so) ...
+def fetch_generic_html(source_config):
+    # Generic scraper for future sources
+    # This is a placeholder for now, can be expanded based on 'selectors' in config
+    url = source_config['url']
+    name = source_config['name']
+    print(f"Fetching {name} (Generic) from {url}...")
+    return []
 
 def main():
+    try:
+        config = load_config()
+    except Exception as e:
+        print(f"Failed to load config: {e}")
+        return
+
     state = load_state()
     processed_ids = set(state.get("processed_ids", []))
     new_processed_ids = list(processed_ids)
     
     all_updates = []
     
-    # 1. Fetch Release Notes
-    rn_updates = fetch_updates_generic("https://www.figma.com/release-notes/", "Release Notes")
-    all_updates.extend(rn_updates)
-    
-    # 2. Fetch Blog
-    blog_updates = fetch_updates_generic("https://www.figma.com/blog/", "Blog")
-    all_updates.extend(blog_updates)
+    for source in config.get('sources', []):
+        if not source.get('enabled', True):
+            print(f"Skipping disabled source: {source['name']}")
+            continue
+            
+        source_type = source.get('type')
+        if source_type in ['figma_release_notes', 'figma_blog']:
+            updates = fetch_figma_generic(source['url'], source['name'])
+            all_updates.extend(updates)
+        elif source_type == 'html_generic':
+            updates = fetch_generic_html(source)
+            all_updates.extend(updates)
+        else:
+            print(f"Unknown source type: {source_type}")
     
     # Deduplicate all_updates by ID
-    # Use a dictionary to keep the first occurrence of each ID
     unique_updates_map = {}
     for u in all_updates:
         if u["id"] not in unique_updates_map:
@@ -201,7 +215,7 @@ def main():
         if update["id"] in processed_ids:
             continue
             
-        # Filter logic
+        # Filter logic (Generic filtering could be moved to config too, but keeping hardcoded for now)
         title_lower = update["title"].lower()
         if any(x in title_lower for x in ["pricing", "education", "student", "teacher"]):
             print(f"Skipping filtered update: {update['title']}")
@@ -211,8 +225,6 @@ def main():
         pending_updates.append(update)
     
     # Batching: Take top 5
-    # Assuming the fetch order is roughly chronological (newest first usually for scraped lists), 
-    # we take the first 5.
     batch = pending_updates[:5]
     
     if batch:
@@ -221,14 +233,12 @@ def main():
     else:
         print("No new updates to send.")
 
-    # Mark ALL fetched updates as processed to prevent sending old history in future runs
-    # This ensures we only notify about *newly appeared* items next time.
+    # Mark ALL fetched updates as processed
     for u in all_updates:
         new_processed_ids.append(u["id"])
     
-    # 4. Save State
-    save_state({"processed_ids": list(set(new_processed_ids))}) # Ensure unique
-    print("Figma Monitor finished.")
+    save_state({"processed_ids": list(set(new_processed_ids))})
+    print("Monitor finished.")
 
 if __name__ == "__main__":
     main()

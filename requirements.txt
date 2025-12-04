@@ -2,3 +2,6 @@ requests
 beautifulsoup4
 feedparser
 deep-translator
+PyYAML
+streamlit
+pandas

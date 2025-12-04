@@ -1,0 +1,8 @@
+sources:
+  - name: "Figma Release Notes"
+    url: "https://www.figma.com/release-notes/"
+    type: "figma_release_notes" # Special type for the complex logic we already have
+    
+  - name: "Figma Blog"
+    url: "https://www.figma.com/blog/"
+    type: "figma_blog" # Special type for the complex logic we already have

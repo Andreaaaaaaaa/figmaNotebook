@@ -28,6 +28,17 @@ This tool automatically fetches updates from Figma Release Notes and Blog, filte
     python3 main.py
     ```
 
+4.  **Admin UI (Configuration)**:
+    To manage sources and test connections visually:
+    ```bash
+    python3 -m streamlit run admin.py
+    ```
+    This will open a web page where you can:
+    - Add/Remove monitoring sources.
+    - Enable/Disable sources.
+    - Test connections and run trial scrapes.
+    - Manually send notifications to WeCom.
+
 ## Deployment (GitHub Actions)
 
 You can run this script automatically using GitHub Actions (free for public/private repos).
