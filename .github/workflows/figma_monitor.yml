@@ -1,10 +1,10 @@
 name: Figma Monitor
 
-//on:
-  schedule:
+#on:
+  #schedule:
     # Run daily at 09:00 AM Beijing Time (01:00 UTC)
-    - cron: '0 1 * * *'
-  workflow_dispatch: # Allow manual trigger
+    #- cron: '0 1 * * *'
+  #workflow_dispatch: # Allow manual trigger
 
 permissions:
   contents: write
